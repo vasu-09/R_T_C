@@ -9,6 +9,8 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
+import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.web.SecurityFilterChain;
 
 /**
@@ -21,13 +23,33 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtDecoder jwtDecoder) throws Exception {
+        // Spring Security's bearer token filter runs before request matching and will
+        // reject requests that contain an Authorization header if the JWT cannot be
+        // validated. This is problematic for WebSocket handshakes because the token
+        // is validated later in {@link JwtHandshakeInterceptor}.  To prevent the
+        // resource server from short–circuiting the handshake we use a custom
+        // BearerTokenResolver that skips token resolution for the WebSocket endpoint.
+
+        DefaultBearerTokenResolver resolver = new DefaultBearerTokenResolver();
+        BearerTokenResolver skippingResolver = request -> {
+            String uri = request.getRequestURI();
+            if (uri != null && uri.startsWith("/ws")) {
+                // Let JwtHandshakeInterceptor handle authentication for WebSockets
+                return null;
+            }
+            return resolver.resolve(request);
+        };
         http
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/.well-known/jwks.json","/ws").permitAll()
+                        .requestMatchers("/.well-known/jwks.json", "/ws/**").permitAll()
                         .anyRequest().authenticated()
                 )
-                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.decoder(jwtDecoder)));
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .bearerTokenResolver(skippingResolver)
+                        .jwt(jwt -> jwt.decoder(jwtDecoder))
+                );
+
         return http.build();
     }
 
