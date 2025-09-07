@@ -1,5 +1,6 @@
 package com.om.Real_Time_Communication.config;
 
+import jakarta.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -11,7 +12,6 @@ import java.util.Map;
 
 @Configuration
 @ConfigurationProperties(prefix = "jwt")
-@Getter @Setter
 public class RtcJwtConfig {
     /** The expected issuer claim. May be discovered from the OIDC metadata. */
     private String issuer;
@@ -41,7 +41,8 @@ public class RtcJwtConfig {
      * Resolve JWKS URI from the configured issuer or issuerUri if necessary.
      */
     public String getJwksUri() {
-        if (jwksUri == null || jwksUri.isBlank()) {
+        if ((jwksUri == null || jwksUri.isBlank()) &&
+                ((issuer != null && !issuer.isBlank()) || (issuerUri != null && !issuerUri.isBlank()))) {
             Map<?, ?> meta = fetchOidcMetadata();
             Object uri = meta.get("jwks_uri");
             if (uri != null) {
@@ -49,7 +50,9 @@ public class RtcJwtConfig {
             }
             if (issuer == null || issuer.isBlank()) {
                 Object iss = meta.get("issuer");
-                if (iss != null) issuer = iss.toString();
+                if (iss != null) {
+                    issuer = iss.toString();
+                }
             }
         }
         return jwksUri;
@@ -57,11 +60,18 @@ public class RtcJwtConfig {
 
 
     public String getIssuer() {
-        if (issuer == null || issuer.isBlank()) {
-            // Trigger metadata fetch which may populate issuer and jwksUri
-            getJwksUri();
-        }
+
         return issuer;
+    }
+
+    @PostConstruct
+    public void validate() {
+        if ((jwksUri == null || jwksUri.isBlank()) &&
+                (issuer == null || issuer.isBlank()) &&
+                (issuerUri == null || issuerUri.isBlank())) {
+            throw new IllegalStateException(
+                    "Either jwt.jwks-uri or jwt.issuer / jwt.issuer-uri must be configured");
+        }
     }
 
     public String getAudience() {
@@ -76,11 +86,9 @@ public class RtcJwtConfig {
         String metadataUrl;
         if (issuerUri != null && !issuerUri.isBlank()) {
             metadataUrl = issuerUri;
-        } else if (issuer != null && !issuer.isBlank()) {
+        } else {
             String base = issuer.endsWith("/") ? issuer.substring(0, issuer.length() - 1) : issuer;
             metadataUrl = base + "/.well-known/openid-configuration";
-        } else {
-            throw new IllegalStateException("Neither jwt.jwks-uri nor jwt.issuer / jwt.issuer-uri is configured");
         }
 
         Map<?, ?> meta = webClient.get().uri(metadataUrl)
